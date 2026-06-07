@@ -1,0 +1,14 @@
+{
+  "id": "on-funding-completed",
+  "event": "agent.completed",
+  "conditions": {
+    "agentType": "funding",
+    "featureFlag": "FUNDING_AGENT_ENABLED"
+  },
+  "action": {
+    "type": "generate_report",
+    "target": "startup_intelligence_report",
+    "parallel": false
+  },
+  "enabled": false
+}

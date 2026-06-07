@@ -1,0 +1,10 @@
+{
+  "id": "on-idea-submitted",
+  "event": "idea.submitted",
+  "action": {
+    "type": "trigger_agent",
+    "target": "validation",
+    "parallel": false
+  },
+  "enabled": true
+}

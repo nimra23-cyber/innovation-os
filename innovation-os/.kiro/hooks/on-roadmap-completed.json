@@ -1,0 +1,13 @@
+{
+  "id": "on-roadmap-completed",
+  "event": "agent.completed",
+  "conditions": {
+    "agentType": "roadmap"
+  },
+  "action": {
+    "type": "generate_report",
+    "target": "startup_intelligence_report",
+    "parallel": false
+  },
+  "enabled": true
+}

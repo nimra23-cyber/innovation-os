@@ -1,0 +1,13 @@
+{
+  "id": "on-validation-completed",
+  "event": "agent.completed",
+  "conditions": {
+    "agentType": "validation"
+  },
+  "action": {
+    "type": "trigger_agent",
+    "target": "competitor",
+    "parallel": false
+  },
+  "enabled": true
+}

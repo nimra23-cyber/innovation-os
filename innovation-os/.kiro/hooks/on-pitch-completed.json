@@ -1,0 +1,14 @@
+{
+  "id": "on-pitch-completed",
+  "event": "agent.completed",
+  "conditions": {
+    "agentType": "pitch",
+    "featureFlag": "PITCH_AGENT_ENABLED"
+  },
+  "action": {
+    "type": "generate_report",
+    "target": "startup_intelligence_report",
+    "parallel": false
+  },
+  "enabled": false
+}

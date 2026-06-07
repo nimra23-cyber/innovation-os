@@ -1,0 +1,204 @@
+// packages/backend/prisma/schema.prisma
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── Core ────────────────────────────────────────────────────────────────────
+
+model ProjectWorkspace {
+  id               String   @id @default(cuid())
+  title            String
+  description      String
+  problemStatement String
+  targetAudience   String
+  industry         String
+  goals            String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  agentRuns          AgentRun[]
+  validationResult   ValidationResult?
+  competitorAnalysis CompetitorAnalysis?
+  roadmapPhases      RoadmapPhase[]
+  feasibilityScore   FeasibilityScore?
+  report             StartupIntelligenceReport?
+  conversations      ConversationHistory[] // post-MVP stub
+}
+
+model AgentRun {
+  id           String    @id @default(cuid())
+  projectId    String
+  agentType    String // 'validation' | 'competitor' | 'roadmap' | 'feasibility' | ...
+  status       String // 'pending' | 'running' | 'completed' | 'failed'
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  project ProjectWorkspace @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, agentType])
+  @@index([projectId])
+}
+
+// ─── Validation Agent ─────────────────────────────────────────────────────────
+
+model ValidationResult {
+  id                        String   @id @default(cuid())
+  projectId                 String   @unique
+  innovationScore           Int
+  problemClarityScore       Int
+  marketDemandScore         Int
+  technicalFeasibilityScore Int
+  innovationExplanation     String
+  problemClarityExplanation String
+  marketDemandExplanation   String
+  techFeasibilityExplanation String
+  dataSourceAttribution     String
+  createdAt                 DateTime @default(now())
+
+  project         ProjectWorkspace          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  risks           ValidationRisk[]
+  recommendations ValidationRecommendation[]
+}
+
+model ValidationRisk {
+  id           String @id @default(cuid())
+  validationId String
+  title        String
+  description  String
+  severity     String // 'High' | 'Medium' | 'Low'
+
+  validation ValidationResult @relation(fields: [validationId], references: [id], onDelete: Cascade)
+}
+
+model ValidationRecommendation {
+  id           String @id @default(cuid())
+  validationId String
+  title        String
+  description  String
+  impactRank   Int // 1 = highest impact
+
+  validation ValidationResult @relation(fields: [validationId], references: [id], onDelete: Cascade)
+}
+
+// ─── Competitor Agent ─────────────────────────────────────────────────────────
+
+model CompetitorAnalysis {
+  id                    String   @id @default(cuid())
+  projectId             String   @unique
+  swotStrengths         String // JSON array
+  swotWeaknesses        String // JSON array
+  swotOpportunities     String // JSON array
+  swotThreats           String // JSON array
+  marketOpportunities   String // JSON array
+  competitiveAdvantages String // JSON array
+  dataSourceAttribution String
+  createdAt             DateTime @default(now())
+
+  project     ProjectWorkspace @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  competitors Competitor[]
+}
+
+model Competitor {
+  id          String  @id @default(cuid())
+  analysisId  String
+  name        String
+  description String
+  category    String // 'Direct' | 'Indirect' | 'Substitute'
+  url         String?
+
+  analysis CompetitorAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+}
+
+// ─── Roadmap Agent ────────────────────────────────────────────────────────────
+
+model RoadmapPhase {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String // 'Research' | 'Validation' | 'MVP' | 'Testing' | 'Launch' | 'Growth'
+  order     Int // 1–6
+  startWeek Int
+  endWeek   Int
+  createdAt DateTime @default(now())
+
+  project    ProjectWorkspace @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestones Milestone[]
+
+  @@unique([projectId, order])
+  @@index([projectId])
+}
+
+model Milestone {
+  id            String @id @default(cuid())
+  phaseId       String
+  title         String
+  description   String
+  priority      String // 'High' | 'Medium' | 'Low'
+  durationWeeks Int
+
+  phase        RoadmapPhase  @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  deliverables Deliverable[]
+}
+
+model Deliverable {
+  id          String @id @default(cuid())
+  milestoneId String
+  title       String
+  description String
+
+  milestone Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+}
+
+// ─── Feasibility Engine ───────────────────────────────────────────────────────
+
+model FeasibilityScore {
+  id                        String   @id @default(cuid())
+  projectId                 String   @unique
+  technicalScore            Int
+  marketScore               Int
+  financialScore            Int
+  innovationScore           Int
+  launchReadinessScore      Int
+  technicalExplanation      String
+  marketExplanation         String
+  financialExplanation      String
+  innovationExplanation     String
+  launchReadinessExplanation String
+  createdAt                 DateTime @default(now())
+
+  project ProjectWorkspace @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ─── Report ───────────────────────────────────────────────────────────────────
+
+model StartupIntelligenceReport {
+  id                 String   @id @default(cuid())
+  projectId          String   @unique
+  executiveSummary   String
+  keyRecommendations String // JSON array of strings
+  generatedAt        DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  project ProjectWorkspace @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ─── Post-MVP: Conversation History ──────────────────────────────────────────
+
+model ConversationHistory {
+  id        String   @id @default(cuid())
+  projectId String
+  role      String // 'user' | 'assistant'
+  content   String
+  createdAt DateTime @default(now())
+
+  project ProjectWorkspace @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
