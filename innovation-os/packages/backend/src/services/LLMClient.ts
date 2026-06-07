@@ -82,6 +82,50 @@ export class LLMClient {
     if (!text) throw new Error('OpenAI-compatible API returned empty response');
     return text;
   }
+
+  /**
+   * Like complete(), but does NOT append the JSON_ONLY_INSTRUCTION.
+   * Used for free-text responses (e.g. executive summary generation).
+   * Tries Gemini first; falls back to OpenAI-compatible if configured.
+   */
+  async completeText(systemContext: string, userPrompt: string): Promise<string> {
+    if (this.gemini) {
+      try {
+        return await this.callGemini(systemContext, userPrompt);
+      } catch (error) {
+        logger.warn({ error }, 'Gemini API call failed, attempting fallback');
+        if (this.openaiClient) {
+          return await this.callOpenAICompatibleText(systemContext, userPrompt);
+        }
+        throw error;
+      }
+    }
+
+    if (this.openaiClient) {
+      return await this.callOpenAICompatibleText(systemContext, userPrompt);
+    }
+
+    throw new Error(
+      'No LLM provider configured. Set GEMINI_API_KEY or OPENAI_COMPATIBLE_API_URL environment variable.'
+    );
+  }
+
+  private async callOpenAICompatibleText(systemContext: string, userPrompt: string): Promise<string> {
+    if (!this.openaiClient) throw new Error('OpenAI-compatible client not initialized');
+
+    const completion = await this.openaiClient.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemContext },
+        { role: 'user', content: userPrompt },
+      ],
+      // No response_format — plain text output
+    });
+
+    const text = completion.choices[0]?.message?.content;
+    if (!text) throw new Error('OpenAI-compatible API returned empty response');
+    return text;
+  }
 }
 
 // Singleton instance — shared across all agents

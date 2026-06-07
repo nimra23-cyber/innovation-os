@@ -7,6 +7,9 @@ import { reportsRouter } from './routes/reports';
 import { sseRouter } from './routes/sse';
 import { configRouter } from './routes/config';
 import logger from './lib/logger';
+import { hooksEngine } from './services/HooksEngine';
+import { agentOrchestrator } from './services/AgentOrchestrator';
+import { reportGenerator } from './services/ReportGenerator';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -24,6 +27,12 @@ app.use('/api/config', configRouter);
 
 // Error handler — must be last
 app.use(errorHandler);
+
+// Wire HooksEngine ↔ AgentOrchestrator
+hooksEngine.setOrchestrator(agentOrchestrator);
+hooksEngine.setReportGenerator(reportGenerator);
+// Load hooks from .kiro/hooks directory
+hooksEngine.loadHooks().catch(err => logger.error({ err }, 'Failed to load hooks at startup'));
 
 // Start server when run directly
 if (require.main === module) {
