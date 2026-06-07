@@ -18,3 +18,14 @@ export class ConflictError extends Error {
     this.name = 'ConflictError';
   }
 }
+
+export class AgentParseError extends Error {
+  constructor(
+    message: string,
+    public readonly agentType: string,
+    public readonly raw?: string
+  ) {
+    super(message);
+    this.name = 'AgentParseError';
+  }
+}
