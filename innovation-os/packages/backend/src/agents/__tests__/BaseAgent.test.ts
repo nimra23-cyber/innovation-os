@@ -131,18 +131,61 @@ describe('BaseAgent.execute()', () => {
     expect(output.data).toEqual({ result: '{"result":"the_output"}' });
   });
 
-  it('propagates an error thrown by parseOutput', async () => {
-    const parseError = new Error('Parse failed');
+  it('propagates an error thrown by parseOutput immediately when it is NOT an AgentParseError', async () => {
+    const persistError = new Error('Non-parse error from parseOutput');
     const mockLLM = makeMockLLMClient('bad json');
 
     class ThrowingParseAgent extends TestAgent {
       parseOutput(_raw: string): TestOutput {
-        throw parseError;
+        throw persistError;
       }
     }
 
     const agent = new ThrowingParseAgent('project-123', mockLLM);
-    await expect(agent.execute(MOCK_IDEA)).rejects.toThrow('Parse failed');
+    await expect(agent.execute(MOCK_IDEA)).rejects.toThrow('Non-parse error from parseOutput');
+    // Non-AgentParseError — no retries, LLM called exactly once
+    expect(mockLLM.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries up to 3 times when parseOutput throws AgentParseError, then re-throws', async () => {
+    const { AgentParseError } = await import('../../lib/errors');
+    const mockLLM = makeMockLLMClient('malformed json');
+
+    class AlwaysFailParseAgent extends TestAgent {
+      parseOutput(_raw: string): TestOutput {
+        throw new AgentParseError('bad json', 'validation', _raw);
+      }
+    }
+
+    const agent = new AlwaysFailParseAgent('project-123', mockLLM);
+    await expect(agent.execute(MOCK_IDEA)).rejects.toThrow(AgentParseError);
+    // Should have attempted 3 times (MAX_PARSE_RETRIES = 3)
+    expect(mockLLM.complete).toHaveBeenCalledTimes(3);
+  });
+
+  it('succeeds on second attempt after initial AgentParseError', async () => {
+    const { AgentParseError } = await import('../../lib/errors');
+    let callCount = 0;
+    const mockLLM = makeMockLLMClient();
+    (mockLLM.complete as jest.Mock)
+      .mockResolvedValueOnce('malformed')
+      .mockResolvedValueOnce('{"result":"recovered"}');
+
+    class FailOnceThenSucceedAgent extends TestAgent {
+      parseOutput(raw: string): TestOutput {
+        callCount++;
+        if (callCount === 1) {
+          throw new AgentParseError('parse failed on first try', 'validation', raw);
+        }
+        return { result: raw };
+      }
+    }
+
+    const agent = new FailOnceThenSucceedAgent('project-123', mockLLM);
+    const output = await agent.execute(MOCK_IDEA);
+
+    expect(output.data.result).toBe('{"result":"recovered"}');
+    expect(mockLLM.complete).toHaveBeenCalledTimes(2);
   });
 
   it('propagates an error thrown by persistOutput', async () => {

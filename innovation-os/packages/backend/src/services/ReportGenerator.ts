@@ -74,6 +74,7 @@ export class ReportGenerator {
 
   /**
    * Generates (or regenerates) the StartupIntelligenceReport for a project.
+   * Guards that all four required agents have completed before proceeding.
    * Fetches all agent outputs, generates executive summary via LLM,
    * then upserts the report record.
    */
@@ -86,6 +87,22 @@ export class ReportGenerator {
     updatedAt: Date;
   }> {
     logger.info({ projectId }, 'Generating Startup Intelligence Report');
+
+    // ── Guard: verify all required agents have completed ──────────────────────
+    const REQUIRED_AGENTS = ['validation', 'competitor', 'roadmap', 'feasibility'] as const;
+    const agentRuns = await prisma.agentRun.findMany({
+      where: { projectId, agentType: { in: [...REQUIRED_AGENTS] } },
+      select: { agentType: true, status: true },
+    });
+
+    const statusMap = Object.fromEntries(agentRuns.map(r => [r.agentType, r.status]));
+    const notCompleted = REQUIRED_AGENTS.filter(a => statusMap[a] !== 'completed');
+
+    if (notCompleted.length > 0) {
+      throw new NotFoundError(
+        `Cannot generate report: the following agents have not completed: ${notCompleted.join(', ')} (project: ${projectId})`
+      );
+    }
 
     const data = await this.getFullReportData(projectId);
 

@@ -1,0 +1,17 @@
+{
+  "id": "on-competitor-completed",
+  "event": "agent.completed",
+  "conditions": {
+    "agentType": "competitor"
+  },
+  "action": {
+    "type": "trigger_agent",
+    "target": ["roadmap", "funding", "mentor"],
+    "parallel": true,
+    "conditions": {
+      "funding": { "featureFlag": "FUNDING_AGENT_ENABLED" },
+      "mentor": { "featureFlag": "MENTOR_AGENT_ENABLED" }
+    }
+  },
+  "enabled": true
+}

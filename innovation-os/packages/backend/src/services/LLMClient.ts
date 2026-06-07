@@ -57,12 +57,37 @@ export class LLMClient {
     const model = this.gemini.getGenerativeModel({
       model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
       systemInstruction: systemContext,
+      generationConfig: {
+        temperature: 0,          // deterministic output — reduces JSON malformation
+        candidateCount: 1,
+      },
     });
 
-    const result = await model.generateContent(userPrompt);
-    const text = result.response.text();
+    let result;
+    try {
+      result = await model.generateContent(userPrompt);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ error: message }, 'Gemini generateContent failed');
+      throw err;
+    }
 
-    if (!text) throw new Error('Gemini returned empty response');
+    const candidate = result.response.candidates?.[0];
+    if (!candidate) {
+      const blockReason = result.response.promptFeedback?.blockReason;
+      throw new Error(
+        `Gemini returned no candidates${blockReason ? ` (blocked: ${blockReason})` : ''}`
+      );
+    }
+
+    const text = result.response.text();
+    if (!text) throw new Error('Gemini returned empty text response');
+
+    logger.debug(
+      { responseLength: text.length, finishReason: candidate.finishReason },
+      'Gemini response received'
+    );
+
     return text;
   }
 

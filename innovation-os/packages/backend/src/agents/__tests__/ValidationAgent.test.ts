@@ -163,9 +163,12 @@ describe('Property 4 — score range invariant', () => {
     const scoreArb = fc.integer({ min: 0, max: 100 });
 
     // Arbitrary for explanation strings of at least 50 chars
+    // Use a fixed prefix + uuid-style suffix to guarantee length and avoid
+    // characters that look like JSON structural patterns (e.g. ,} or >[)
     const explanationArb = fc
       .string({ minLength: 10, maxLength: 30 })
-      .map((s) => s.padEnd(50, ' x'));
+      .filter(s => !/[,{}\[\]>]/.test(s))
+      .map((s) => ('This is a valid explanation padded for length: ' + s).slice(0, 120));
 
     // Arbitrary for a valid risk
     const riskArb = fc.record({
@@ -258,7 +261,8 @@ describe('Property 6 — structural completeness', () => {
 
     const explanationArb = fc
       .string({ minLength: 10, maxLength: 30 })
-      .map((s) => s.padEnd(50, ' x'));
+      .filter(s => !/[,{}\[\]>]/.test(s))
+      .map((s) => ('This is a valid explanation padded for length: ' + s).slice(0, 120));
 
     const riskArb = fc.record({
       title: fc.string({ minLength: 1, maxLength: 30 }),

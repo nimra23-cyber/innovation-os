@@ -2,11 +2,15 @@ import { AgentType, IdeaData } from '@innovationos/shared';
 import { LLMClient, llmClient } from '../services/LLMClient';
 import { SteeringLoader } from '../services/SteeringLoader';
 import { logger } from '../lib/logger';
+import { AgentParseError } from '../lib/errors';
 
 export interface AgentOutput<T = unknown> {
   agentType: AgentType;
   data: T;
 }
+
+/** Maximum number of LLM+parse attempts before giving up. */
+const MAX_PARSE_RETRIES = 3;
 
 export abstract class BaseAgent<TOutput = unknown> {
   protected steeringContext: string = '';
@@ -49,7 +53,8 @@ export abstract class BaseAgent<TOutput = unknown> {
    * Main execution method. Orchestrates init → buildPrompt → LLM call →
    * parseOutput → persistOutput. Returns the typed AgentOutput.
    *
-   * Errors from any step propagate up to the AgentOrchestrator.
+   * Retries up to MAX_PARSE_RETRIES times if the LLM returns unparseable JSON.
+   * Errors from persistOutput propagate up to the AgentOrchestrator.
    */
   async execute(idea: IdeaData): Promise<AgentOutput<TOutput>> {
     logger.info({ agentType: this.agentType, projectId: this.projectId }, 'Agent starting');
@@ -63,17 +68,56 @@ export abstract class BaseAgent<TOutput = unknown> {
       'Calling LLM'
     );
 
-    const raw = await this.llmClient.complete(this.steeringContext, prompt);
+    let lastError: Error | unknown = null;
 
-    const parsed = this.parseOutput(raw);
+    for (let attempt = 1; attempt <= MAX_PARSE_RETRIES; attempt++) {
+      let raw: string;
+      try {
+        raw = await this.llmClient.complete(this.steeringContext, prompt);
+      } catch (llmError) {
+        // LLM transport error — re-throw immediately, no point retrying here
+        throw llmError;
+      }
 
-    await this.persistOutput(this.projectId, parsed);
+      try {
+        const parsed = this.parseOutput(raw);
 
-    logger.info(
-      { agentType: this.agentType, projectId: this.projectId },
-      'Agent completed successfully'
-    );
+        await this.persistOutput(this.projectId, parsed);
 
-    return { agentType: this.agentType, data: parsed };
+        logger.info(
+          { agentType: this.agentType, projectId: this.projectId, attempt },
+          'Agent completed successfully'
+        );
+
+        return { agentType: this.agentType, data: parsed };
+
+      } catch (parseError) {
+        lastError = parseError;
+
+        if (parseError instanceof AgentParseError) {
+          logger.warn(
+            {
+              agentType: this.agentType,
+              projectId: this.projectId,
+              attempt,
+              maxAttempts: MAX_PARSE_RETRIES,
+              error: parseError.message,
+            },
+            `JSON parse/validate failed on attempt ${attempt} — ${attempt < MAX_PARSE_RETRIES ? 'retrying' : 'giving up'}`
+          );
+
+          if (attempt < MAX_PARSE_RETRIES) {
+            // Small delay before retry to avoid hammering the API
+            await new Promise(r => setTimeout(r, 500 * attempt));
+            continue;
+          }
+        } else {
+          // Non-parse error (e.g. DB write) — re-throw immediately
+          throw parseError;
+        }
+      }
+    }
+
+    throw lastError;
   }
 }

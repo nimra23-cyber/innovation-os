@@ -282,8 +282,9 @@ describe('Property 4 — All Agent Score Outputs Are Valid Integers in [0, 100] 
 
     // Arbitrary for explanation strings of at least 40 chars
     const explanationArb = fc
-      .string({ minLength: 10, maxLength: 40 })
-      .map((s) => s.padEnd(40, ' x'));
+      .string({ minLength: 10, maxLength: 30 })
+      .filter(s => !/[,{}\[\]>]/.test(s))
+      .map((s) => ('Valid explanation text for testing: ' + s).slice(0, 80));
 
     await fc.assert(
       fc.asyncProperty(

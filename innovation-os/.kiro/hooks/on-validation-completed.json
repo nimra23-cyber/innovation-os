@@ -1,12 +1,12 @@
 {
-  "id": "on-competitor-completed",
+  "id": "on-validation-completed",
   "event": "agent.completed",
   "conditions": {
-    "agentType": "competitor"
+    "agentType": "validation"
   },
   "action": {
     "type": "trigger_agent",
-    "target": "roadmap",
+    "target": "competitor",
     "parallel": false
   },
   "enabled": true
