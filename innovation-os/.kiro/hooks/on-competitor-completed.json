@@ -6,12 +6,8 @@
   },
   "action": {
     "type": "trigger_agent",
-    "target": ["roadmap", "funding", "mentor"],
-    "parallel": true,
-    "conditions": {
-      "funding": { "featureFlag": "FUNDING_AGENT_ENABLED" },
-      "mentor": { "featureFlag": "MENTOR_AGENT_ENABLED" }
-    }
+    "target": "roadmap",
+    "parallel": false
   },
   "enabled": true
 }

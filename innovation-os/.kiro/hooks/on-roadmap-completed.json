@@ -5,8 +5,8 @@
     "agentType": "roadmap"
   },
   "action": {
-    "type": "generate_report",
-    "target": "startup_intelligence_report",
+    "type": "trigger_agent",
+    "target": "feasibility",
     "parallel": false
   },
   "enabled": true

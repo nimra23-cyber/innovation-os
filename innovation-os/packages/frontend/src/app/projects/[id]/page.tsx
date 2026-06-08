@@ -556,16 +556,45 @@ export default function ProjectDashboard() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
 
-  const { agentStatuses, reportReady, updateAgentStatus } = useProjectStore();
+  const { agentStatuses, reportReady, updateAgentStatus, initProject } = useProjectStore();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [outputs, setOutputs] = useState<AgentOutputMap>({});
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Subscribe to SSE
-  useSSE(projectId);
+  // Fetch report helper (defined early so it can be passed to useSSE)
+  const fetchReport = useCallback(async () => {
+    try {
+      const data = await api.getReport(projectId);
+      if (data) {
+        // Defensively normalise keyRecommendations: the backend always sends a
+        // parsed array, but guard against a JSON string arriving unexpectedly.
+        const recs = data.keyRecommendations;
+        const normalised: ReportData = {
+          ...data,
+          keyRecommendations: Array.isArray(recs)
+            ? recs
+            : typeof recs === 'string'
+            ? (() => { try { return JSON.parse(recs); } catch { return []; } })()
+            : [],
+        };
+        setReport(normalised);
+      }
+    } catch {
+      // silently ignore
+    }
+  }, [projectId]);
 
-  // Load project on mount
+  // Reset per-project store state whenever the projectId changes,
+  // preventing stale reportReady / agentStatuses from a previous project.
+  useEffect(() => {
+    initProject(projectId);
+  }, [projectId, initProject]);
+
+  // Subscribe to SSE — pass fetchReport so report_ready immediately loads the report
+  useSSE(projectId, { onReportReady: fetchReport });
+
+  // Load project on mount — also eagerly checks if report already exists in DB
   useEffect(() => {
     api.getProject(projectId).then((p) => {
       setProject(p);
@@ -575,6 +604,10 @@ export default function ProjectDashboard() {
       });
       setLoading(false);
     }).catch(() => setLoading(false));
+
+    // Immediately try to load the report in case it was already generated
+    // before this page was opened (SSE event would have been missed).
+    fetchReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -593,17 +626,7 @@ export default function ProjectDashboard() {
     [projectId]
   );
 
-  // Fetch report
-  const fetchReport = useCallback(async () => {
-    try {
-      const data = await api.getReport(projectId);
-      if (data) setReport(data);
-    } catch {
-      // silently ignore
-    }
-  }, [projectId]);
-
-  // Poll for outputs of running/pending agents; stop when all done
+  // Poll for outputs of running/pending agents and for the report
   useEffect(() => {
     const AGENTS: CoreAgentType[] = ['validation', 'competitor', 'roadmap', 'feasibility'];
 
@@ -622,15 +645,17 @@ export default function ProjectDashboard() {
         }
       });
 
-      if (reportReady && !report) {
+      // Poll for the report regardless of reportReady flag —
+      // catches cases where the SSE event was missed.
+      if (!report) {
         fetchReport();
       }
     }, 3000);
 
     return () => clearInterval(timer);
-  }, [agentStatuses, outputs, reportReady, report, fetchOutput, fetchReport]);
+  }, [agentStatuses, outputs, report, fetchOutput, fetchReport]);
 
-  // Fetch report when reportReady becomes true
+  // Also fetch immediately whenever reportReady becomes true (SSE path)
   useEffect(() => {
     if (reportReady && !report) {
       fetchReport();
@@ -807,7 +832,7 @@ export default function ProjectDashboard() {
             <Badge variant="pending">Pending</Badge>
           )}
         </div>
-        {reportReady && report ? (
+        {report ? (
           <Section title="Startup Intelligence Report" icon="📄" defaultOpen>
             <ReportSection report={report} projectId={projectId} />
           </Section>

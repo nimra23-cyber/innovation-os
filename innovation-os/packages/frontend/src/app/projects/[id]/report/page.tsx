@@ -1,10 +1,29 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { cn, scoreColor, scoreBg, formatDate } from '@/lib/utils';
 import { ScoreCard } from '@/components/ui/ScoreCard';
 import { Badge } from '@/components/ui/Badge';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Safely parse keyRecommendations whether it arrives as string[] or a JSON
+ * string (e.g. "[\"Rec 1\",\"Rec 2\"]"). Returns [] on any failure.
+ */
+function parseRecommendations(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((r) => typeof r === 'string');
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((r: unknown) => typeof r === 'string');
+    } catch {
+      // malformed — fall through
+    }
+  }
+  return [];
+}
 
 // ─── Local types ──────────────────────────────────────────────────────────────
 
@@ -76,21 +95,13 @@ interface FullReport {
   id: string;
   projectId: string;
   executiveSummary: string;
-  keyRecommendations: string[];
+  keyRecommendations: unknown; // intentionally loose — normalised by parseRecommendations()
   generatedAt: string;
   validation?: ValidationData | null;
   competitor?: CompetitorData | null;
   roadmap?: { phases: Phase[] } | null;
   feasibility?: FeasibilityData | null;
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const categoryVariant = (c: string) =>
-  c === 'Direct' ? 'danger' : c === 'Indirect' ? 'warning' : 'info';
-
-const priorityVariant = (p: string) =>
-  p === 'High' ? 'danger' : p === 'Medium' ? 'warning' : 'success';
 
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 
@@ -105,44 +116,88 @@ function ReportSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
+const categoryVariant = (c: string) =>
+  c === 'Direct' ? 'danger' : c === 'Indirect' ? 'warning' : ('info' as const);
+
+const priorityVariant = (p: string) =>
+  p === 'High' ? 'danger' : p === 'Medium' ? 'warning' : ('success' as const);
+
 // ─── Main page ────────────────────────────────────────────────────────────────
+
+const POLL_INTERVAL_MS = 5_000;
 
 export default function ReportPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
 
   const [report, setReport] = useState<FullReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(true); // true = still waiting for report
+  const [fetchError, setFetchError] = useState(false);
+
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const tryFetch = async () => {
+    try {
+      const data = await api.getReport(projectId);
+      if (data) {
+        setReport(data as unknown as FullReport);
+        setPending(false);
+        setFetchError(false);
+        stopPolling(); // report found — no need to keep polling
+      }
+      // data === null means still generating — keep polling
+    } catch {
+      // Network / server error — keep polling, mark as errored only after
+      // we stop (i.e. if user leaves the page). Don't stop polling on errors.
+      setFetchError(true);
+    }
+  };
 
   useEffect(() => {
-    api
-      .getReport(projectId)
-      .then((data) => {
-        if (!data) {
-          setError('Report not ready yet. Please come back in a moment.');
-        } else {
-          setReport(data as unknown as FullReport);
-        }
-      })
-      .catch(() => setError('Failed to load report.'))
-      .finally(() => setLoading(false));
+    // Immediate first attempt
+    tryFetch();
+
+    // Then poll every 5 s until the report is loaded
+    pollRef.current = setInterval(tryFetch, POLL_INTERVAL_MS);
+
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  if (loading) {
+  // ── Loading / pending state ────────────────────────────────────────────────
+
+  if (pending) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+      <div className="max-w-2xl mx-auto px-4 py-20 text-center">
+        <div className="w-14 h-14 rounded-full border-2 border-primary/30 border-t-primary animate-spin mx-auto mb-6" />
+        <p className="text-lg font-semibold text-foreground mb-2">
+          Generating your Startup Intelligence Report…
+        </p>
+        <p className="text-sm text-muted-foreground">
+          This usually takes 30–60 seconds after all agents complete.
+          {fetchError && ' (Retrying…)'}
+        </p>
+        <a
+          href={`/projects/${projectId}`}
+          className="mt-6 inline-block text-sm text-primary hover:underline"
+        >
+          ← Back to dashboard
+        </a>
       </div>
     );
   }
 
-  if (error || !report) {
+  if (!report) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-20 text-center">
-        <p className="text-lg font-semibold text-foreground mb-2">
-          {error ?? 'Report unavailable'}
-        </p>
+        <p className="text-lg font-semibold text-foreground mb-2">Report unavailable</p>
         <a href={`/projects/${projectId}`} className="text-sm text-primary hover:underline">
           ← Back to dashboard
         </a>
@@ -154,6 +209,7 @@ export default function ReportPage() {
   const competitor = report.competitor;
   const phases = report.roadmap?.phases ?? [];
   const feasibility = report.feasibility;
+  const keyRecommendations = parseRecommendations(report.keyRecommendations);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -180,9 +236,7 @@ export default function ReportPage() {
             📄
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">
-              Startup Intelligence Report
-            </h1>
+            <h1 className="text-2xl font-bold text-foreground">Startup Intelligence Report</h1>
             <p className="text-xs text-muted-foreground">
               Generated {formatDate(report.generatedAt)}
             </p>
@@ -203,26 +257,10 @@ export default function ReportPage() {
       {validation && (
         <ReportSection title="Idea Validation">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <ScoreCard
-              label="Innovation"
-              score={validation.innovationScore}
-              explanation={validation.innovationExplanation}
-            />
-            <ScoreCard
-              label="Problem Clarity"
-              score={validation.problemClarityScore}
-              explanation={validation.problemClarityExplanation}
-            />
-            <ScoreCard
-              label="Market Demand"
-              score={validation.marketDemandScore}
-              explanation={validation.marketDemandExplanation}
-            />
-            <ScoreCard
-              label="Tech Feasibility"
-              score={validation.technicalFeasibilityScore}
-              explanation={validation.techFeasibilityExplanation}
-            />
+            <ScoreCard label="Innovation" score={validation.innovationScore} explanation={validation.innovationExplanation} />
+            <ScoreCard label="Problem Clarity" score={validation.problemClarityScore} explanation={validation.problemClarityExplanation} />
+            <ScoreCard label="Market Demand" score={validation.marketDemandScore} explanation={validation.marketDemandExplanation} />
+            <ScoreCard label="Tech Feasibility" score={validation.technicalFeasibilityScore} explanation={validation.techFeasibilityExplanation} />
           </div>
         </ReportSection>
       )}
@@ -237,23 +275,15 @@ export default function ReportPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left border-b border-border">
-                      <th className="pb-2 pr-4 text-xs font-semibold text-muted-foreground">
-                        Name
-                      </th>
-                      <th className="pb-2 pr-4 text-xs font-semibold text-muted-foreground">
-                        Type
-                      </th>
-                      <th className="pb-2 text-xs font-semibold text-muted-foreground">
-                        Description
-                      </th>
+                      <th className="pb-2 pr-4 text-xs font-semibold text-muted-foreground">Name</th>
+                      <th className="pb-2 pr-4 text-xs font-semibold text-muted-foreground">Type</th>
+                      <th className="pb-2 text-xs font-semibold text-muted-foreground">Description</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {competitor.competitors.map((comp) => (
                       <tr key={comp.id}>
-                        <td className="py-3 pr-4 font-medium text-foreground whitespace-nowrap">
-                          {comp.name}
-                        </td>
+                        <td className="py-3 pr-4 font-medium text-foreground whitespace-nowrap">{comp.name}</td>
                         <td className="py-3 pr-4">
                           <Badge variant={categoryVariant(comp.category)}>{comp.category}</Badge>
                         </td>
@@ -279,9 +309,7 @@ export default function ReportPage() {
                   ] as const
                 ).map(({ key, label, color }) => (
                   <div key={key} className={cn('p-3 rounded-lg border', color)}>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                      {label}
-                    </p>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{label}</p>
                     <ul className="space-y-1">
                       {competitor.swot[key].map((item, i) => (
                         <li key={i} className="text-xs text-foreground flex gap-1.5">
@@ -296,14 +324,11 @@ export default function ReportPage() {
             </div>
           )}
 
-          {(competitor.marketOpportunities.length > 0 ||
-            competitor.competitiveAdvantages.length > 0) && (
+          {(competitor.marketOpportunities.length > 0 || competitor.competitiveAdvantages.length > 0) && (
             <div className="grid sm:grid-cols-2 gap-4">
               {competitor.marketOpportunities.length > 0 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-2">
-                    Market Opportunities
-                  </h3>
+                  <h3 className="text-sm font-semibold text-foreground mb-2">Market Opportunities</h3>
                   <ul className="space-y-1.5">
                     {competitor.marketOpportunities.map((item, i) => (
                       <li key={i} className="flex gap-2 text-xs text-muted-foreground">
@@ -316,9 +341,7 @@ export default function ReportPage() {
               )}
               {competitor.competitiveAdvantages.length > 0 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-2">
-                    Competitive Advantages
-                  </h3>
+                  <h3 className="text-sm font-semibold text-foreground mb-2">Competitive Advantages</h3>
                   <ul className="space-y-1.5">
                     {competitor.competitiveAdvantages.map((item, i) => (
                       <li key={i} className="flex gap-2 text-xs text-muted-foreground">
@@ -346,40 +369,24 @@ export default function ReportPage() {
                   </span>
                   <div>
                     <p className="text-sm font-semibold text-foreground">{phase.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Week {phase.startWeek} – {phase.endWeek}
-                    </p>
+                    <p className="text-xs text-muted-foreground">Week {phase.startWeek} – {phase.endWeek}</p>
                   </div>
                 </div>
                 <div className="px-4 pb-4 pt-2 space-y-2">
                   {phase.milestones.map((milestone) => (
-                    <div
-                      key={milestone.id}
-                      className="p-3 rounded-lg bg-secondary/20 border border-border"
-                    >
+                    <div key={milestone.id} className="p-3 rounded-lg bg-secondary/20 border border-border">
                       <div className="flex items-center gap-2 mb-1">
-                        <Badge variant={priorityVariant(milestone.priority)}>
-                          {milestone.priority}
-                        </Badge>
-                        <span className="text-sm font-medium text-foreground">
-                          {milestone.title}
-                        </span>
-                        <span className="text-xs text-muted-foreground ml-auto shrink-0">
-                          {milestone.durationWeeks}w
-                        </span>
+                        <Badge variant={priorityVariant(milestone.priority)}>{milestone.priority}</Badge>
+                        <span className="text-sm font-medium text-foreground">{milestone.title}</span>
+                        <span className="text-xs text-muted-foreground ml-auto shrink-0">{milestone.durationWeeks}w</span>
                       </div>
-                      <p className="text-xs text-muted-foreground mb-1.5">
-                        {milestone.description}
-                      </p>
+                      <p className="text-xs text-muted-foreground mb-1.5">{milestone.description}</p>
                       {milestone.deliverables.length > 0 && (
                         <ul className="space-y-0.5">
                           {milestone.deliverables.map((d) => (
                             <li key={d.id} className="text-xs text-muted-foreground flex gap-1.5">
                               <span className="text-primary shrink-0">◦</span>
-                              <span>
-                                <strong className="text-foreground/80">{d.title}:</strong>{' '}
-                                {d.description}
-                              </span>
+                              <span><strong className="text-foreground/80">{d.title}:</strong> {d.description}</span>
                             </li>
                           ))}
                         </ul>
@@ -396,7 +403,6 @@ export default function ReportPage() {
       {/* Feasibility */}
       {feasibility && (
         <ReportSection title="Feasibility Assessment">
-          {/* Launch readiness hero */}
           <div className="text-center py-5 bg-secondary/20 rounded-xl border border-border mb-4">
             <p className="text-sm text-muted-foreground mb-1">Launch Readiness Score</p>
             <p className={cn('text-5xl font-bold', scoreColor(feasibility.launchReadinessScore))}>
@@ -414,39 +420,20 @@ export default function ReportPage() {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <ScoreCard
-              label="Technical"
-              score={feasibility.technicalScore}
-              explanation={feasibility.technicalExplanation}
-            />
-            <ScoreCard
-              label="Market"
-              score={feasibility.marketScore}
-              explanation={feasibility.marketExplanation}
-            />
-            <ScoreCard
-              label="Financial"
-              score={feasibility.financialScore}
-              explanation={feasibility.financialExplanation}
-            />
-            <ScoreCard
-              label="Innovation"
-              score={feasibility.innovationScore}
-              explanation={feasibility.innovationExplanation}
-            />
+            <ScoreCard label="Technical" score={feasibility.technicalScore} explanation={feasibility.technicalExplanation} />
+            <ScoreCard label="Market" score={feasibility.marketScore} explanation={feasibility.marketExplanation} />
+            <ScoreCard label="Financial" score={feasibility.financialScore} explanation={feasibility.financialExplanation} />
+            <ScoreCard label="Innovation" score={feasibility.innovationScore} explanation={feasibility.innovationExplanation} />
           </div>
         </ReportSection>
       )}
 
       {/* Key Recommendations */}
-      {report.keyRecommendations.length > 0 && (
+      {keyRecommendations.length > 0 && (
         <ReportSection title="Key Recommendations">
           <ol className="space-y-3">
-            {report.keyRecommendations.map((rec, i) => (
-              <li
-                key={i}
-                className="flex gap-4 p-4 bg-card border border-border rounded-lg"
-              >
+            {keyRecommendations.map((rec, i) => (
+              <li key={i} className="flex gap-4 p-4 bg-card border border-border rounded-lg">
                 <span className="w-8 h-8 rounded-full bg-primary/20 text-primary text-sm font-bold flex items-center justify-center shrink-0">
                   {i + 1}
                 </span>

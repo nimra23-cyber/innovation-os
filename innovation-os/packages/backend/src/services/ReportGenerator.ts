@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
 import { NotFoundError } from '../lib/errors';
 import { LLMClient, llmClient } from './LLMClient';
+import { sseBroadcaster } from './SSEBroadcaster';
 
 // ─── FullReportData ───────────────────────────────────────────────────────────
 
@@ -130,6 +131,14 @@ export class ReportGenerator {
     });
 
     logger.info({ projectId, reportId: report.id }, 'Startup Intelligence Report generated');
+
+    // Broadcast report_ready SSE event so the frontend knows to fetch the report
+    sseBroadcaster.broadcast(projectId, 'report_ready', {
+      projectId,
+      reportId: report.id,
+      timestamp: new Date().toISOString(),
+    });
+
     return report;
   }
 

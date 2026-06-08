@@ -164,7 +164,7 @@ Respond with valid JSON only. Do not include any text outside the JSON object.`;
    * Overrides BaseAgent.execute() to:
    * 1. Fetch innovationScore from the prior ValidationResult in the DB
    * 2. Build a context-aware prompt that includes the innovationScore
-   * 3. Parse the LLM response (3 scores + 5 explanations)
+   * 3. Parse the LLM response (3 scores + 5 explanations) — with up to 3 retries
    * 4. Compute launchReadinessScore via computeLaunchReadiness()
    * 5. Persist the composite FeasibilityOutput to FeasibilityScore table
    */
@@ -179,30 +179,67 @@ Respond with valid JSON only. Do not include any text outside the JSON object.`;
 
     logger.info({ agentType: this.agentType, projectId: this.projectId }, 'Calling LLM');
 
-    const raw = await this.llmClient.complete(this.steeringContext, prompt);
+    const MAX_RETRIES = 3;
+    let lastError: unknown = null;
 
-    const llmOutput = this.parseLLMOutput(raw);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      let raw: string;
+      try {
+        raw = await this.llmClient.complete(this.steeringContext, prompt);
+      } catch (llmError) {
+        throw llmError; // transport error — no point retrying
+      }
 
-    const launchReadinessScore = computeLaunchReadiness(
-      llmOutput.technicalScore,
-      llmOutput.marketScore,
-      llmOutput.financialScore,
-      innovationScore
-    );
+      try {
+        const llmOutput = this.parseLLMOutput(raw);
 
-    const output: FeasibilityOutput = {
-      ...llmOutput,
-      innovationScore,
-      launchReadinessScore,
-    };
+        const launchReadinessScore = computeLaunchReadiness(
+          llmOutput.technicalScore,
+          llmOutput.marketScore,
+          llmOutput.financialScore,
+          innovationScore
+        );
 
-    await this.persistOutput(this.projectId, output);
+        const output: FeasibilityOutput = {
+          ...llmOutput,
+          innovationScore,
+          launchReadinessScore,
+        };
 
-    logger.info(
-      { agentType: this.agentType, projectId: this.projectId },
-      'Agent completed successfully'
-    );
+        await this.persistOutput(this.projectId, output);
 
-    return { agentType: this.agentType, data: output };
+        logger.info(
+          { agentType: this.agentType, projectId: this.projectId, attempt },
+          'Agent completed successfully'
+        );
+
+        return { agentType: this.agentType, data: output };
+
+      } catch (parseError) {
+        lastError = parseError;
+
+        if (parseError instanceof AgentParseError) {
+          logger.warn(
+            {
+              agentType: this.agentType,
+              projectId: this.projectId,
+              attempt,
+              maxAttempts: MAX_RETRIES,
+              error: (parseError as Error).message,
+            },
+            `FeasibilityEngine JSON parse failed on attempt ${attempt} — ${attempt < MAX_RETRIES ? 'retrying' : 'giving up'}`
+          );
+          if (attempt < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, 500 * attempt));
+            continue;
+          }
+        } else {
+          // Non-parse error (e.g. DB write) — re-throw immediately
+          throw parseError;
+        }
+      }
+    }
+
+    throw lastError;
   }
 }

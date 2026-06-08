@@ -3,8 +3,14 @@ import { useEffect } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import type { AgentType, AgentStatus } from '@innovationos/shared';
 
-export function useSSE(projectId: string) {
+interface UseSSEOptions {
+  /** Called whenever a report_ready event arrives — use this to immediately fetch the report. */
+  onReportReady?: () => void;
+}
+
+export function useSSE(projectId: string, options: UseSSEOptions = {}) {
   const { updateAgentStatus, setTimeRemaining, setReportReady } = useProjectStore();
+  const { onReportReady } = options;
 
   useEffect(() => {
     if (!projectId) return;
@@ -34,12 +40,15 @@ export function useSSE(projectId: string) {
 
     es.addEventListener('report_ready', () => {
       setReportReady(true);
+      // Immediately invoke caller's fetch callback so the report loads
+      // without waiting for the next polling tick.
+      onReportReady?.();
     });
 
     es.onerror = () => {
-      // Browser will auto-reconnect on its own
+      // Browser auto-reconnects — no action needed here
     };
 
     return () => es.close();
-  }, [projectId, updateAgentStatus, setTimeRemaining, setReportReady]);
+  }, [projectId, updateAgentStatus, setTimeRemaining, setReportReady, onReportReady]);
 }
